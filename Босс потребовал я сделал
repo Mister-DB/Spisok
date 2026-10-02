@@ -1,0 +1,376 @@
+from __future__ import annotations
+
+import random
+import statistics
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from enum import Enum
+from typing import Iterable
+
+
+# ==============================================================
+#  ДОМЕН
+# ==============================================================
+
+class Level(Enum):
+    INTERN = ("Intern", 0.6)
+    JUNIOR = ("Junior", 0.85)
+    MIDDLE = ("Middle", 1.0)
+    SENIOR = ("Senior", 1.4)
+    LEAD   = ("Lead", 1.8)
+    HEAD   = ("Head", 2.4)
+
+    def __init__(self, title: str, coef: float):
+        self.title = title
+        self.coef = coef
+
+
+class Department(Enum):
+    ENGINEERING = "Engineering"
+    SALES       = "Sales"
+    MARKETING   = "Marketing"
+    HR          = "HR"
+    FINANCE     = "Finance"
+    SUPPORT     = "Support"
+
+
+class Status(Enum):
+    ACTIVE   = "Active"
+    ON_LEAVE = "On leave"
+    FIRED    = "Fired"
+
+
+@dataclass(frozen=True)
+class Person:
+    first_name: str
+    last_name: str
+    birth_year: int
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}"
+
+    @property
+    def age(self) -> int:
+        return date.today().year - self.birth_year
+
+
+@dataclass
+class Employee:
+    id: int
+    person: Person
+    department: Department
+    level: Level
+    base_salary: float
+    hired: date
+    status: Status = Status.ACTIVE
+    skills: list[str] = field(default_factory=list)
+    projects: list[int] = field(default_factory=list)
+
+    @property
+    def salary(self) -> float:
+        bonus = 1.0 + 0.02 * min(self.years_of_service, 10)
+        return round(self.base_salary * self.level.coef * bonus, 2)
+
+    @property
+    def years_of_service(self) -> float:
+        return (date.today() - self.hired).days / 365.25
+
+
+@dataclass
+class Project:
+    id: int
+    name: str
+    department: Department
+    budget: float
+    deadline: date
+    team: list[int] = field(default_factory=list)
+    done: bool = False
+
+    @property
+    def days_left(self) -> int:
+        return (self.deadline - date.today()).days
+
+
+# ==============================================================
+#  ГЕНЕРАТОР ДАННЫХ
+# ==============================================================
+
+FIRST_NAMES = [
+    "Иван", "Пётр", "Сергей", "Алексей", "Дмитрий", "Николай", "Андрей",
+    "Мария", "Ольга", "Анна", "Екатерина", "Елена", "Татьяна", "Ирина",
+    "Максим", "Артём", "Кирилл", "Роман", "Владимир", "Юрий",
+]
+LAST_NAMES = [
+    "Иванов", "Петров", "Сидоров", "Смирнов", "Кузнецов", "Попов",
+    "Соколов", "Лебедев", "Козлов", "Новиков", "Морозов", "Волков",
+    "Орлов", "Зайцев", "Соловьёв", "Борисов", "Яковлев", "Григорьев",
+]
+SKILLS = [
+    "Python", "Java", "Go", "C++", "SQL", "Docker", "Kubernetes",
+    "React", "TypeScript", "Excel", "1C", "Tableau", "Figma",
+    "Переговоры", "Продажи", "Копирайтинг", "Аналитика", "ML",
+]
+PROJECT_NAMES = [
+    "Атлас", "Орион", "Вега", "Кассиопея", "Дельта", "Феникс", "Титан",
+    "Немезида", "Церера", "Юпитер", "Сатурн", "Плутон", "Обсидиан",
+    "Кварц", "Гранит", "Иридий", "Плазма", "Кобальт",
+]
+
+
+class CompanyFactory:
+    def __init__(self, seed: int = 42):
+        self.rng = random.Random(seed)
+        self._emp_id = 0
+        self._proj_id = 0
+
+    def make_employee(self) -> Employee:
+        self._emp_id += 1
+        person = Person(
+            first_name=self.rng.choice(FIRST_NAMES),
+            last_name=self.rng.choice(LAST_NAMES),
+            birth_year=self.rng.randint(1965, 2004),
+        )
+        level = self.rng.choices(
+            list(Level),
+            weights=[10, 25, 30, 20, 10, 5],
+        )[0]
+        dept = self.rng.choice(list(Department))
+        base = self.rng.choice([60_000, 80_000, 100_000, 120_000, 150_000])
+        hired = date.today() - timedelta(days=self.rng.randint(30, 4000))
+        status = self.rng.choices(
+            [Status.ACTIVE, Status.ON_LEAVE, Status.FIRED],
+            weights=[85, 10, 5],
+        )[0]
+        skills = self.rng.sample(SKILLS, k=self.rng.randint(2, 5))
+        return Employee(self._emp_id, person, dept, level, base, hired, status, skills)
+
+    def make_project(self) -> Project:
+        self._proj_id += 1
+        return Project(
+            id=self._proj_id,
+            name=self.rng.choice(PROJECT_NAMES) + f"-{self._proj_id}",
+            department=self.rng.choice(list(Department)),
+            budget=self.rng.randint(500_000, 20_000_000),
+            deadline=date.today() + timedelta(days=self.rng.randint(-30, 365)),
+        )
+
+
+# ==============================================================
+#  СИСТЕМА
+# ==============================================================
+
+class Company:
+    def __init__(self, name: str):
+        self.name = name
+        self.employees: dict[int, Employee] = {}
+        self.projects: dict[int, Project] = {}
+
+    # ---------- CRUD ----------
+    def hire(self, emp: Employee) -> None:
+        self.employees[emp.id] = emp
+
+    def fire(self, emp_id: int) -> None:
+        if emp_id in self.employees:
+            self.employees[emp_id].status = Status.FIRED
+
+    def launch(self, proj: Project) -> None:
+        self.projects[proj.id] = proj
+
+    def assign(self, emp_id: int, proj_id: int) -> None:
+        emp = self.employees.get(emp_id)
+        proj = self.projects.get(proj_id)
+        if not emp or not proj:
+            return
+        if proj_id not in emp.projects:
+            emp.projects.append(proj_id)
+        if emp_id not in proj.team:
+            proj.team.append(emp_id)
+
+    # ---------- Аналитика ----------
+    def active(self) -> list[Employee]:
+        return [e for e in self.employees.values() if e.status == Status.ACTIVE]
+
+    def payroll(self) -> float:
+        return round(sum(e.salary for e in self.active()), 2)
+
+    def by_department(self) -> dict[Department, list[Employee]]:
+        result: dict[Department, list[Employee]] = {d: [] for d in Department}
+        for e in self.active():
+            result[e.department].append(e)
+        return result
+
+    def top_paid(self, n: int = 5) -> list[Employee]:
+        return sorted(self.active(), key=lambda e: e.salary, reverse=True)[:n]
+
+    def salary_stats(self) -> dict[str, float]:
+        s = [e.salary for e in self.active()]
+        if not s:
+            return {}
+        return {
+            "min":    min(s),
+            "max":    max(s),
+            "mean":   round(statistics.mean(s), 2),
+            "median": round(statistics.median(s), 2),
+            "stdev":  round(statistics.pstdev(s), 2),
+        }
+
+    def skill_index(self) -> dict[str, int]:
+        idx: dict[str, int] = {}
+        for e in self.active():
+            for s in e.skills:
+                idx[s] = idx.get(s, 0) + 1
+        return dict(sorted(idx.items(), key=lambda kv: -kv[1]))
+
+    def risk_projects(self) -> list[Project]:
+        return [p for p in self.projects.values() if not p.done and p.days_left < 30]
+
+    def total_budget(self) -> float:
+        return round(sum(p.budget for p in self.projects.values()), 2)
+
+    def avg_team_size(self) -> float:
+        teams = [len(p.team) for p in self.projects.values() if p.team]
+        return round(statistics.mean(teams), 2) if teams else 0.0
+
+
+# ==============================================================
+#  ОТЧЁТЫ
+# ==============================================================
+
+def hr(width: int = 78, ch: str = "─") -> str:
+    return ch * width
+
+
+def fmt_money(v: float) -> str:
+    return f"{v:,.2f} ₽".replace(",", " ")
+
+
+def report_header(title: str) -> None:
+    print()
+    print(hr(78, "═"))
+    print(f"  {title}")
+    print(hr(78, "═"))
+
+
+def report_general(c: Company) -> None:
+    report_header(f"СВОДКА ПО КОМПАНИИ «{c.name}»")
+    print(f"  Сотрудников всего:      {len(c.employees)}")
+    print(f"  Активных:               {len(c.active())}")
+    print(f"  В отпуске:              {sum(1 for e in c.employees.values() if e.status == Status.ON_LEAVE)}")
+    print(f"  Уволено:                {sum(1 for e in c.employees.values() if e.status == Status.FIRED)}")
+    print(f"  Проектов:               {len(c.projects)}")
+    print(f"  Общий бюджет проектов:  {fmt_money(c.total_budget())}")
+    print(f"  Средний размер команды: {c.avg_team_size()}")
+    print(f"  ФОТ (месяц):            {fmt_money(c.payroll())}")
+    print(f"  ФОТ (год):              {fmt_money(c.payroll() * 12)}")
+
+
+def report_departments(c: Company) -> None:
+    report_header("РАСПРЕДЕЛЕНИЕ ПО ОТДЕЛАМ")
+    print(f"  {'Отдел':<14}{'Чел.':>6}{'ФОТ':>18}{'Ср. зп':>16}")
+    print(hr(78, "─"))
+    for dept, emps in c.by_department().items():
+        if not emps:
+            continue
+        payroll = sum(e.salary for e in emps)
+        avg = payroll / len(emps)
+        print(f"  {dept.value:<14}{len(emps):>6}{fmt_money(payroll):>18}{fmt_money(avg):>16}")
+
+
+def report_top(c: Company, n: int = 7) -> None:
+    report_header(f"ТОП-{n} ПО ЗАРПЛАТЕ")
+    for i, e in enumerate(c.top_paid(n), 1):
+        print(f"  {i:>2}. {e.person.full_name:<22} "
+              f"{e.level.title:<8} {e.department.value:<12} "
+              f"{fmt_money(e.salary):>16}  ({e.years_of_service:.1f} г.)")
+
+
+def report_stats(c: Company) -> None:
+    report_header("СТАТИСТИКА ПО ЗАРПЛАТАМ (активные)")
+    stats = c.salary_stats()
+    if not stats:
+        print("  Нет данных.")
+        return
+    print(f"  Минимум:      {fmt_money(stats['min'])}")
+    print(f"  Максимум:     {fmt_money(stats['max'])}")
+    print(f"  Среднее:      {fmt_money(stats['mean'])}")
+    print(f"  Медиана:      {fmt_money(stats['median'])}")
+    print(f"  Ст. отклон.:  {fmt_money(stats['stdev'])}")
+
+
+def report_skills(c: Company) -> None:
+    report_header("ИНДЕКС НАВЫКОВ")
+    idx = c.skill_index()
+    max_count = max(idx.values()) if idx else 1
+    for skill, count in list(idx.items())[:15]:
+        bar = "█" * int(count / max_count * 30)
+        print(f"  {skill:<16} {count:>3}  {bar}")
+
+
+def report_risk(c: Company) -> None:
+    report_header("ПРОЕКТЫ В ЗОНЕ РИСКА (< 30 дней до дедлайна)")
+    risky = c.risk_projects()
+    if not risky:
+        print("  Все проекты в безопасности.")
+        return
+    for p in sorted(risky, key=lambda x: x.days_left):
+        status = "ПРОСРОЧЕН" if p.days_left < 0 else f"{p.days_left} дн."
+        print(f"  #{p.id:<3} {p.name:<16} {p.department.value:<12} "
+              f"{fmt_money(p.budget):>18}   {status}")
+
+
+def report_full_roster(c: Company) -> None:
+    report_header("ПОЛНЫЙ СОСТАВ")
+    print(f"  {'ID':<5}{'ФИО':<24}{'Отдел':<13}{'Ур.':<9}{'Статус':<12}{'ЗП':>16}")
+    print(hr(78, "─"))
+    for e in sorted(c.employees.values(), key=lambda x: x.id):
+        print(f"  {e.id:<5}{e.person.full_name:<24}"
+              f"{e.department.value:<13}{e.level.title:<9}"
+              f"{e.status.value:<12}{fmt_money(e.salary):>16}")
+
+
+# ==============================================================
+#  ЗАПУСК
+# ==============================================================
+
+def build_company(seed: int = 42, n_emp: int = 150, n_proj: int = 30) -> Company:
+    rng = random.Random(seed)
+    factory = CompanyFactory(seed)
+    company = Company("FutureTech Industries")
+
+    for _ in range(n_emp):
+        company.hire(factory.make_employee())
+
+    for _ in range(n_proj):
+        company.launch(factory.make_project())
+
+    active_ids = [e.id for e in company.active()]
+    for proj in company.projects.values():
+        size = rng.randint(2, 8)
+        for emp_id in rng.sample(active_ids, k=min(size, len(active_ids))):
+            company.assign(emp_id, proj.id)
+
+    return company
+
+
+def main() -> None:
+    print("Инициализация системы...")
+    company = build_company(seed=42, n_emp=150, n_proj=30)
+    print(f"Компания «{company.name}» успешно загружена.")
+
+    report_general(company)
+    report_departments(company)
+    report_stats(company)
+    report_top(company, 7)
+    report_skills(company)
+    report_risk(company)
+    report_full_roster(company)
+
+    print()
+    print(hr(78, "═"))
+    print("  Отчёт сгенерирован автоматически. Всего сотрудников:", len(company.employees))
+    print(hr(78, "═"))
+
+
+if __name__ == "__main__":
+    main()
